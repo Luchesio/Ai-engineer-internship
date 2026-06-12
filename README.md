@@ -172,3 +172,45 @@ curl -X POST "http://127.0.0.1:8000/reset?session_id=user1"
 - Memory is in-process, so it resets when the server restarts. For production, replace the in-memory history dict with a persistent backend (Redis, a database, etc.).
 - `gpt-4o-mini` is set as the default. If your account lacks access to a given model, change `OPENAI_MODEL` in `.env` to one you can use.
 - Never commit your `.env` file or real key to version control.
+
+# Data Ingestion Notebook (pandas)
+
+`data_ingestion.ipynb` is a reusable pandas workflow that takes raw data from CSV, JSON, or plain text into a clean, analysis-ready CSV. It generates a small messy sample dataset so it runs end to end with no external files — point `load_data` at your own path to use it for real.
+
+## Pipeline
+
+| Step              | Action                                                                                        |
+| ----------------- | --------------------------------------------------------------------------------------------- |
+| Load              | `load_data()` dispatches on file extension: `.csv`, `.json`, and `.txt`/`.text`               |
+| Inspect           | `shape`, `dtypes`, `head()`, and a missing-value count on the raw frame                       |
+| Normalize columns | Lowercases, strips whitespace, drops punctuation, and turns spaces into underscores           |
+| Handle missing    | Drops empty rows/columns; fills numeric gaps with the median, text/categorical with `unknown` |
+| EDA               | `head()`, `describe()` (numeric and object), and `value_counts()` on key categories           |
+| Export            | Saves the cleaned frame to `cleaned_orders.csv`                                               |
+
+## Requirements
+
+- Python 3.10+
+- pip packages: `pandas`, `jupyter` (or `notebook` / JupyterLab)
+
+## Usage
+
+```bash
+pip install pandas jupyter
+jupyter notebook data_ingestion.ipynb
+```
+
+Run the cells top to bottom. The notebook writes the sample inputs to `sample_data/` and the result to `cleaned_orders.csv`.
+
+## Using Your Own Data
+
+Replace the sample path with your file — the rest of the pipeline is unchanged:
+
+```python
+df = load_data("path/to/your_file.csv")   # or .json / .txt
+df = normalize_columns(df)
+df = handle_missing(df)
+df.to_csv("cleaned_output.csv", index=False)
+```
+
+`load_data` returns a DataFrame for CSV and JSON; text files become a single `text` column with blank lines dropped.
