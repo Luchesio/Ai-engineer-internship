@@ -6,3 +6,5 @@ langchain-core
 langchain-openai
 python-dotenv
 pydantic
+sentence-transformers
+numpy

@@ -214,3 +214,60 @@ df.to_csv("cleaned_output.csv", index=False)
 ```
 
 `load_data` returns a DataFrame for CSV and JSON; text files become a single `text` column with blank lines dropped.
+
+# Task 5 — Semantic Search (Embeddings + Top-K Retrieval)
+
+`semantic_search.py` stores a small set of text documents, indexes them as embeddings, and retrieves the most relevant ones for a query by **semantic similarity** rather than keyword matching. This is the retrieval core behind a RAG pipeline.
+
+## How It Works
+
+| Piece            | Role                                                                                     |
+| ---------------- | ---------------------------------------------------------------------------------------- |
+| `embed()`        | Turns text into normalized vectors with the `all-MiniLM-L6-v2` sentence-transformer      |
+| `VectorStore`    | Holds documents + embeddings; handles cosine search and saving/loading the index to disk |
+| `build_index()`  | Embeds the document set and persists it under `index/`                                   |
+| `search()`       | Embeds a query and returns the top-k closest documents with similarity scores            |
+
+Embeddings are L2-normalized, so cosine similarity reduces to a single dot product (`embeddings @ query`). The index — `index/documents.json` and `index/embeddings.npy` — is written on the first run and reused afterward, so documents are stored once and retrieved on demand.
+
+Because matching happens in embedding space, a query like _"How can I make my phone battery last longer?"_ surfaces the document about lithium-ion battery lifespan even though they share almost no words.
+
+## Requirements
+
+- Python 3.10+
+- pip packages: `sentence-transformers`, `numpy`
+
+The model (~80 MB) downloads automatically from Hugging Face on first run.
+
+## Setup & Usage
+
+```bash
+pip install -r requirements.txt
+cd "Task 5"
+python semantic_search.py
+```
+
+The script builds the index (first run only), then prints the top-3 results for a set of demo queries:
+
+```
+Query: How can I make my phone battery last longer?
+  1. [0.541] To extend a lithium-ion battery's lifespan, avoid full discharges and keep the charge between 20 and 80 percent.
+  2. [0.187] Electric cars produce no tailpipe emissions, though their footprint depends on how the electricity is generated.
+  3. [0.143] Regular exercise strengthens the heart, improves sleep, and helps the body manage stress.
+```
+
+Pass your own queries as command-line arguments to search interactively:
+
+```bash
+python semantic_search.py "what should I eat to stay healthy" "how do I save bread for later"
+```
+
+## Using Your Own Data
+
+Replace the `DOCUMENTS` list with your own texts, delete the `index/` folder so it rebuilds, and run again:
+
+```python
+DOCUMENTS = ["Your first document...", "Your second document..."]
+```
+
+For larger collections, swap the in-memory `VectorStore` for a dedicated vector database (FAISS, Chroma, Qdrant) — the `embed()` / `search()` interface stays the same.
