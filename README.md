@@ -221,12 +221,12 @@ df.to_csv("cleaned_output.csv", index=False)
 
 ## How It Works
 
-| Piece            | Role                                                                                     |
-| ---------------- | ---------------------------------------------------------------------------------------- |
-| `embed()`        | Turns text into normalized vectors with the `all-MiniLM-L6-v2` sentence-transformer      |
-| `VectorStore`    | Holds documents + embeddings; handles cosine search and saving/loading the index to disk |
-| `build_index()`  | Embeds the document set and persists it under `index/`                                   |
-| `search()`       | Embeds a query and returns the top-k closest documents with similarity scores            |
+| Piece           | Role                                                                                     |
+| --------------- | ---------------------------------------------------------------------------------------- |
+| `embed()`       | Turns text into normalized vectors with the `all-MiniLM-L6-v2` sentence-transformer      |
+| `VectorStore`   | Holds documents + embeddings; handles cosine search and saving/loading the index to disk |
+| `build_index()` | Embeds the document set and persists it under `index/`                                   |
+| `search()`      | Embeds a query and returns the top-k closest documents with similarity scores            |
 
 Embeddings are L2-normalized, so cosine similarity reduces to a single dot product (`embeddings @ query`). The index — `index/documents.json` and `index/embeddings.npy` — is written on the first run and reused afterward, so documents are stored once and retrieved on demand.
 
@@ -271,3 +271,70 @@ DOCUMENTS = ["Your first document...", "Your second document..."]
 ```
 
 For larger collections, swap the in-memory `VectorStore` for a dedicated vector database (FAISS, Chroma, Qdrant) — the `embed()` / `search()` interface stays the same.
+
+# Task 6 — Notebook with RAG-Powered Q&A (FAISS)
+
+`Task 6/rag_qa.ipynb` answers domain-specific questions by **retrieving** relevant passages from a knowledge base and **generating** an answer grounded in them. It combines the embedding/retrieval idea from Task 5 with the OpenAI model from Task 3, swapping the hand-rolled vector store for a **FAISS** index.
+
+## How It Works
+
+| Step      | Action                                                                               |
+| --------- | ------------------------------------------------------------------------------------ |
+| Documents | A small domain knowledge base (a fictional product, _Lumen_) defined in the notebook |
+| Chunk     | Each document is split into overlapping word windows that keep their source title    |
+| Embed     | Chunks are encoded into normalized vectors with `all-MiniLM-L6-v2`                   |
+| Index     | Vectors go into a FAISS `IndexFlatIP` (cosine similarity on normalized vectors)      |
+| Retrieve  | The query is embedded and FAISS returns the top-k closest chunks with scores         |
+| Generate  | Retrieved chunks become the context for the LLM, which answers and cites its sources |
+
+The FAISS index and chunk metadata are written to `Task 6/rag_index/` on the first run and reused afterward. The model is told to answer **only** from the retrieved context and to say so when the answer isn't there — so out-of-domain questions get a grounded refusal instead of a hallucination.
+
+Because the knowledge base describes a product the model has never seen, correct answers can only come from retrieval. That is the whole point of RAG, and it makes the demo easy to verify.
+
+## Requirements
+
+- Python 3.10+
+- pip packages: `faiss-cpu`, `sentence-transformers`, `numpy`, `langchain-core`, `langchain-openai`, `python-dotenv`, `jupyter`
+
+The embedding model (~80 MB) downloads automatically from Hugging Face on first run.
+
+## Setup & Usage
+
+**1. Install dependencies**
+
+```bash
+pip install -r requirements.txt
+```
+
+**2. (Optional) Configure your OpenAI key**
+
+The generation step uses the same OpenAI setup as Task 3. Without a key the notebook still runs and returns the retrieved context, so you can see retrieval working first.
+
+```bash
+export OPENAI_API_KEY=sk-...your actual key...
+# optional: export OPENAI_MODEL=gpt-4o-mini
+```
+
+**3. Run the notebook**
+
+```bash
+cd "Task 6"
+jupyter notebook rag_qa.ipynb
+```
+
+Run the cells top to bottom. The notebook builds the FAISS index, then answers a set of in-domain questions (each with its sources) and one out-of-domain question to show the grounded refusal.
+
+| Variable         | Required | Default       | Purpose                                                |
+| ---------------- | -------- | ------------- | ------------------------------------------------------ |
+| `OPENAI_API_KEY` | No\*     | —             | Enables LLM answer generation; omit for retrieval-only |
+| `OPENAI_MODEL`   | No       | `gpt-4o-mini` | Chat model used to synthesize the answer               |
+
+\*Without a key, the notebook returns the retrieved context instead of a generated answer.
+
+## Using Your Own Data
+
+1. Replace the `DOCUMENTS` list with your own `{"title": ..., "text": ...}` entries (or load them from files, a database, or an API).
+2. Delete the `Task 6/rag_index/` folder so the index rebuilds against the new content.
+3. Re-run the notebook top to bottom.
+
+Tune `chunk_size` / `overlap` for your document length and `TOP_K` for how much context each answer sees. For large collections, swap `IndexFlatIP` for an approximate FAISS index such as `IndexIVFFlat` — the `retrieve()` / `answer()` interface stays the same.

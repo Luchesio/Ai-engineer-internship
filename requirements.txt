@@ -8,3 +8,5 @@ python-dotenv
 pydantic
 sentence-transformers
 numpy
+faiss-cpu
+jupyter
