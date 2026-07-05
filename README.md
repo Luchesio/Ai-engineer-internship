@@ -338,3 +338,100 @@ Run the cells top to bottom. The notebook builds the FAISS index, then answers a
 3. Re-run the notebook top to bottom.
 
 Tune `chunk_size` / `overlap` for your document length and `TOP_K` for how much context each answer sees. For large collections, swap `IndexFlatIP` for an approximate FAISS index such as `IndexIVFFlat` — the `retrieve()` / `answer()` interface stays the same.
+
+# Task 7 — Real-Time Data Chatbot (Tool Calling + FastAPI)
+
+A chatbot that answers questions using **live external data**. It builds on the Task 3 chatbot by giving the model tools it can call on its own: the LLM decides when a question needs current weather or exchange rates, calls the matching API, and answers from the real values it gets back.
+
+## How It Works
+
+| Piece          | Role                                                                                 |
+| -------------- | ------------------------------------------------------------------------------------ |
+| `tools.py`     | Two tools — `get_weather` (Open-Meteo) and `convert_currency` (open.er-api.com)      |
+| `chatbot.py`   | Binds the tools to the model and runs the tool-calling loop with per-session history |
+| `main.py`      | FastAPI app exposing `/chat`, `/reset`, and a health check at `/`                    |
+| `.env.example` | Template for required environment variables                                          |
+
+The model is bound to the tools with `bind_tools`. On each turn it may respond with tool calls instead of text; `ask()` runs those tools, appends the results, and calls the model again until it returns a final answer. Both APIs are keyless, so the only credential you need is an OpenAI key. The weather tool geocodes the city first, then reads current conditions; the currency tool pulls live rates and covers 160+ currencies (including NGN).
+
+## Requirements
+
+- Python 3.10+
+- pip packages: `fastapi`, `uvicorn`, `httpx`, `langchain-core`, `langchain-openai`, `python-dotenv`, `pydantic`
+
+## Setup
+
+**1. Install dependencies**
+
+```bash
+cd "Task 7"
+pip install -r ../requirements.txt
+```
+
+**2. Configure your API key**
+
+```bash
+cp .env.example .env
+```
+
+Then edit `.env`:
+
+```
+OPENAI_API_KEY=sk-...your actual key...
+OPENAI_MODEL=gpt-4o-mini
+OPENAI_TEMPERATURE=0.2
+```
+
+| Variable             | Required | Default       | Purpose                                      |
+| -------------------- | -------- | ------------- | -------------------------------------------- |
+| `OPENAI_API_KEY`     | Yes      | —             | Your OpenAI secret key                       |
+| `OPENAI_MODEL`       | No       | `gpt-4o-mini` | Chat model to use                            |
+| `OPENAI_TEMPERATURE` | No       | `0.2`         | Higher = more creative, lower = more focused |
+
+**3. Run the server**
+
+```bash
+uvicorn main:app --reload
+```
+
+The app starts on http://127.0.0.1:8000, with interactive docs at http://127.0.0.1:8000/docs.
+
+## Usage
+
+Ask about the weather:
+
+```bash
+curl -X POST http://127.0.0.1:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"question": "What is the weather in Lagos right now?", "session_id": "user1"}'
+```
+
+Ask about currency:
+
+```bash
+curl -X POST http://127.0.0.1:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"question": "How much is 50 USD in NGN?", "session_id": "user1"}'
+```
+
+Response:
+
+```json
+{
+  "answer": "It's 29°C and partly cloudy in Lagos right now...",
+  "session_id": "user1"
+}
+```
+
+Reuse the same `session_id` to keep context (e.g. ask a follow-up like "and in Abuja?"). Clear it with:
+
+```bash
+curl -X POST "http://127.0.0.1:8000/reset?session_id=user1"
+```
+
+## Notes
+
+- No API keys are needed for the data sources — [Open-Meteo](https://open-meteo.com) and [open.er-api.com](https://www.exchangerate-api.com) are both free and keyless. Only the OpenAI key is required.
+- The model is instructed to answer only from tool results, so it won't invent a temperature or rate when a call fails; it reports the problem instead.
+- To add a new capability, write another `@tool` function in `tools.py` and add it to the `TOOLS` list — the loop in `chatbot.py` picks it up automatically.
+- Memory is in-process and resets on restart. For production, back the history dict with Redis or a database.

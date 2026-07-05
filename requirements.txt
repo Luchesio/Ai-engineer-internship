@@ -2,6 +2,7 @@ nltk
 pandas
 fastapi
 uvicorn[standard]
+httpx
 langchain-core
 langchain-openai
 python-dotenv
