@@ -435,3 +435,75 @@ curl -X POST "http://127.0.0.1:8000/reset?session_id=user1"
 - The model is instructed to answer only from tool results, so it won't invent a temperature or rate when a call fails; it reports the problem instead.
 - To add a new capability, write another `@tool` function in `tools.py` and add it to the `TOOLS` list — the loop in `chatbot.py` picks it up automatically.
 - Memory is in-process and resets on restart. For production, back the history dict with Redis or a database.
+
+# Task 8 — Accuracy Test Report (Chatbot Evaluation)
+
+An evaluation harness that measures how accurately the Task 7 chatbot answers questions. It runs a suite of test cases with predefined expected answers against the live chatbot, scores every response automatically, and generates a full PDF report plus a CSV of raw results.
+
+## How It Works
+
+| Piece                      | Role                                                                                       |
+| -------------------------- | ------------------------------------------------------------------------------------------ |
+| `test_cases.json`          | 18 test cases across 6 categories, each with expected answers and machine-checkable checks |
+| `run_accuracy_test.py`     | Runs each case against the Task 7 chatbot, scores it, and writes the outputs               |
+| `Accuracy Test Report.pdf` | The generated report: objective, methodology, results tables, and analysis                 |
+| `results.csv`              | Raw per-case results (question, expected, actual answer, pass/fail, failure reason)        |
+
+Each case defines one or more user turns, a human-readable expected answer, and assertions the chatbot's reply must satisfy — required keywords (`contains_all` / `contains_any`), forbidden keywords, and regex patterns. A case passes only if every assertion holds. Every case runs in a fresh session, so results can't leak between tests.
+
+| Category          | Cases | What it verifies                                                                 |
+| ----------------- | ----- | -------------------------------------------------------------------------------- |
+| General knowledge | 5     | Factual answers (capitals, authors, chemistry, astronomy)                        |
+| Math & reasoning  | 4     | Correct arithmetic and simple logic                                              |
+| Weather tool      | 3     | Live temperatures via the tool, plus graceful failure on an unknown place        |
+| Currency tool     | 3     | Live conversions via the tool, plus graceful failure on an invalid currency code |
+| Memory            | 2     | Multi-turn recall of facts stated earlier in the session                         |
+| Robustness        | 1     | Declining a nonsensical premise instead of hallucinating                         |
+
+Because tool-backed answers change with real-world data, those cases assert **structure** (right city, a value of the right shape from the tool, no invented numbers on failure) rather than a fixed temperature or rate — this keeps the evaluation deterministic while tolerating natural wording variation.
+
+## Requirements
+
+- Python 3.10+
+- Everything from Task 7, plus `reportlab` for the PDF
+
+## Setup & Usage
+
+**1. Install dependencies**
+
+```bash
+pip install -r requirements.txt
+```
+
+**2. Configure your API key** — same as Task 7 (`OPENAI_API_KEY` in `Task 7/.env` or exported in your shell).
+
+**3. Run the evaluation**
+
+```bash
+cd "Task 8"
+python run_accuracy_test.py
+```
+
+The script prints a PASS/FAIL line per case and an overall accuracy score, then writes `results.csv` and regenerates `Accuracy Test Report.pdf` with the results of that run.
+
+To verify the pipeline without spending API credits, run it with simulated answers:
+
+```bash
+python run_accuracy_test.py --mock
+```
+
+## Extending the Suite
+
+Add new cases to `test_cases.json` — the harness picks them up automatically:
+
+```json
+{
+  "id": "GK-06",
+  "category": "general_knowledge",
+  "turns": ["What is the boiling point of water at sea level in Celsius?"],
+  "expected_answer": "100°C",
+  "checks": { "regex": "\\b100\\b" }
+}
+```
+
+Multi-turn cases list several strings in `turns`; only the final answer is scored. Ideas for deeper evaluation: semantic-similarity scoring with the Task 5 embedding model, an LLM-as-judge pass for open-ended answers, repeating each case N times to measure consistency, and tracking latency and cost per case.

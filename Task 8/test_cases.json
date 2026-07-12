@@ -1,0 +1,128 @@
+[
+  {
+    "id": "GK-01",
+    "category": "general_knowledge",
+    "turns": ["What is the capital of France?"],
+    "expected_answer": "Paris",
+    "checks": {"contains_all": ["paris"]}
+  },
+  {
+    "id": "GK-02",
+    "category": "general_knowledge",
+    "turns": ["Who wrote the play Romeo and Juliet?"],
+    "expected_answer": "William Shakespeare",
+    "checks": {"contains_all": ["shakespeare"]}
+  },
+  {
+    "id": "GK-03",
+    "category": "general_knowledge",
+    "turns": ["What is the chemical symbol for gold?"],
+    "expected_answer": "Au",
+    "checks": {"regex": "\\bAu\\b"}
+  },
+  {
+    "id": "GK-04",
+    "category": "general_knowledge",
+    "turns": ["Which is the largest planet in our solar system?"],
+    "expected_answer": "Jupiter",
+    "checks": {"contains_all": ["jupiter"]}
+  },
+  {
+    "id": "GK-05",
+    "category": "general_knowledge",
+    "turns": ["How many continents are there on Earth?"],
+    "expected_answer": "Seven (7)",
+    "checks": {"contains_any": ["seven", "7"]}
+  },
+  {
+    "id": "MR-01",
+    "category": "math_reasoning",
+    "turns": ["What is 15% of 240?"],
+    "expected_answer": "36",
+    "checks": {"regex": "\\b36\\b"}
+  },
+  {
+    "id": "MR-02",
+    "category": "math_reasoning",
+    "turns": ["How many days are there in a leap year?"],
+    "expected_answer": "366",
+    "checks": {"regex": "\\b366\\b"}
+  },
+  {
+    "id": "MR-03",
+    "category": "math_reasoning",
+    "turns": ["What is 12 multiplied by 12?"],
+    "expected_answer": "144",
+    "checks": {"regex": "\\b144\\b"}
+  },
+  {
+    "id": "MR-04",
+    "category": "math_reasoning",
+    "turns": ["What is the next prime number after 13?"],
+    "expected_answer": "17",
+    "checks": {"regex": "\\b17\\b"}
+  },
+  {
+    "id": "TW-01",
+    "category": "tool_weather",
+    "turns": ["What is the weather in Lagos right now?"],
+    "expected_answer": "A live temperature in degrees Celsius for Lagos, sourced from the weather tool",
+    "checks": {"contains_all": ["lagos"], "regex": "-?\\d+(\\.\\d+)?\\s*°?\\s*C"}
+  },
+  {
+    "id": "TW-02",
+    "category": "tool_weather",
+    "turns": ["What is the current temperature in Tokyo?"],
+    "expected_answer": "A live temperature in degrees Celsius for Tokyo, sourced from the weather tool",
+    "checks": {"contains_all": ["tokyo"], "regex": "-?\\d+(\\.\\d+)?\\s*°?\\s*C"}
+  },
+  {
+    "id": "TW-03",
+    "category": "tool_weather",
+    "turns": ["What is the weather like in Zzyzxville right now?"],
+    "expected_answer": "A graceful failure: the bot says it cannot find the place, without inventing a temperature",
+    "checks": {"contains_any": ["could not find", "couldn't find", "unable to find", "not find", "no place", "doesn't appear", "does not appear"], "regex_absent": "-?\\d+(\\.\\d+)?\\s*°\\s*C"}
+  },
+  {
+    "id": "TC-01",
+    "category": "tool_currency",
+    "turns": ["How much is 100 USD in EUR?"],
+    "expected_answer": "A converted amount in EUR based on the live rate from the currency tool",
+    "checks": {"contains_all": ["eur"], "regex": "\\d+(\\.\\d+)?"}
+  },
+  {
+    "id": "TC-02",
+    "category": "tool_currency",
+    "turns": ["How much is 50 US dollars in Nigerian naira?"],
+    "expected_answer": "A converted amount in NGN based on the live rate from the currency tool",
+    "checks": {"contains_any": ["ngn", "naira"], "regex": "\\d+(\\.\\d+)?"}
+  },
+  {
+    "id": "TC-03",
+    "category": "tool_currency",
+    "turns": ["Convert 10 USD to XQZ for me."],
+    "expected_answer": "A graceful failure: the bot reports the invalid currency code instead of inventing a rate",
+    "checks": {"contains_any": ["could not", "couldn't", "invalid", "check the currency", "not a valid", "unable", "not recognized", "doesn't exist", "does not exist"]}
+  },
+  {
+    "id": "MEM-01",
+    "category": "memory",
+    "turns": ["Hi, my name is Ada and I live in Lagos.", "What is my name?"],
+    "expected_answer": "Ada",
+    "checks": {"contains_all": ["ada"]}
+  },
+  {
+    "id": "MEM-02",
+    "category": "memory",
+    "turns": ["I have a meeting scheduled for 3pm on Friday.", "What time is my meeting?"],
+    "expected_answer": "3pm (Friday)",
+    "checks": {"contains_any": ["3pm", "3 pm", "3:00", "15:00"]}
+  },
+  {
+    "id": "RB-01",
+    "category": "robustness",
+    "turns": ["Who is the current president of the Moon?"],
+    "expected_answer": "The bot explains the Moon has no president rather than fabricating a name",
+    "checks": {"contains_any": ["no president", "does not have", "doesn't have", "there is no", "not have a president", "no government", "fictional", "no such"]}
+  }
+]

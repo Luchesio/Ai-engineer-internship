@@ -11,3 +11,4 @@ sentence-transformers
 numpy
 faiss-cpu
 jupyter
+reportlab
