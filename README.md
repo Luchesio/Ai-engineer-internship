@@ -507,3 +507,124 @@ Add new cases to `test_cases.json` — the harness picks them up automatically:
 ```
 
 Multi-turn cases list several strings in `turns`; only the final answer is scored. Ideas for deeper evaluation: semantic-similarity scoring with the Task 5 embedding model, an LLM-as-judge pass for open-ended answers, repeating each case N times to measure consistency, and tracking latency and cost per case.
+
+# Task 9 — Stateful Chatbot with Session History (SQLite + FastAPI)
+
+A chatbot that **maintains context across turns** — and across server restarts. Tasks 3 and 7 keep history in an in-process dict that vanishes on restart; Task 9 makes state a first-class feature by persisting every session to SQLite and exposing endpoints to inspect, resume, and delete conversations.
+
+## How It Works
+
+| Piece          | Role                                                                                     |
+| -------------- | ---------------------------------------------------------------------------------------- |
+| `storage.py`   | SQLite session store — `sessions` and `messages` tables, created automatically on start  |
+| `chatbot.py`   | LCEL chain that loads each session's history from SQLite and replays it into the prompt  |
+| `main.py`      | FastAPI app: `/chat` plus session management (`/sessions`, history, delete)              |
+| `demo.py`      | Scripted multi-turn conversation that proves the bot remembers earlier turns             |
+| `.env.example` | Template for required environment variables                                              |
+
+On every `/chat` call the app loads that session's transcript from SQLite, replays the most recent `HISTORY_WINDOW` messages into the prompt, gets the answer, and writes both the question and the answer back to the database. The full transcript is always stored — the window only bounds what is sent to the model, so long conversations don't blow up the prompt. Omit `session_id` and the server mints a new one and returns it; reuse it to continue the conversation, even after a restart.
+
+## Requirements
+
+- Python 3.10+
+- pip packages: `fastapi`, `uvicorn`, `httpx`, `langchain-core`, `langchain-openai`, `python-dotenv`, `pydantic`
+
+SQLite ships with Python — no database server or extra install needed.
+
+## Setup
+
+**1. Install dependencies**
+
+```bash
+cd "Task 9"
+pip install -r ../requirements.txt
+```
+
+**2. Configure your API key**
+
+```bash
+cp .env.example .env
+```
+
+Then edit `.env`:
+
+```
+OPENAI_API_KEY=sk-...your actual key...
+OPENAI_MODEL=gpt-4o-mini
+OPENAI_TEMPERATURE=0.3
+HISTORY_WINDOW=20
+```
+
+| Variable             | Required | Default       | Purpose                                                  |
+| -------------------- | -------- | ------------- | -------------------------------------------------------- |
+| `OPENAI_API_KEY`     | Yes      | —             | Your OpenAI secret key                                   |
+| `OPENAI_MODEL`       | No       | `gpt-4o-mini` | Chat model to use                                        |
+| `OPENAI_TEMPERATURE` | No       | `0.3`         | Higher = more creative, lower = more focused             |
+| `HISTORY_WINDOW`     | No       | `20`          | Max recent messages replayed into the prompt per session |
+
+**3. Run the server**
+
+```bash
+uvicorn main:app --reload
+```
+
+The app starts on http://127.0.0.1:8000, with interactive docs at http://127.0.0.1:8000/docs. `sessions.db` is created next to the code on first run.
+
+## Usage
+
+Start a conversation (no `session_id` — the server creates one):
+
+```bash
+curl -X POST http://127.0.0.1:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"question": "My name is Ada and I live in Lagos."}'
+```
+
+```json
+{
+  "answer": "Nice to meet you, Ada! ...",
+  "session_id": "a1b2c3d4e5f6",
+  "turns_in_session": 1
+}
+```
+
+Ask a follow-up with the returned `session_id` — the bot answers from context:
+
+```bash
+curl -X POST http://127.0.0.1:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"question": "What is my name and where do I live?", "session_id": "a1b2c3d4e5f6"}'
+```
+
+Inspect and manage sessions:
+
+```bash
+curl http://127.0.0.1:8000/sessions                          # list all sessions with message counts
+curl http://127.0.0.1:8000/sessions/a1b2c3d4e5f6/history     # full stored transcript
+curl -X DELETE http://127.0.0.1:8000/sessions/a1b2c3d4e5f6   # delete a session and its history
+```
+
+## Running the Demo
+
+With the server running, in a second terminal:
+
+```bash
+cd "Task 9"
+python demo.py
+```
+
+The script runs a five-turn conversation: it tells the bot a name, city, and preference in the early turns, then asks questions that can only be answered correctly if the earlier turns were remembered. It prints each exchange and finishes with the persisted transcript size.
+
+To prove state survives a restart, stop the server (Ctrl+C), start it again, and resume the same session:
+
+```bash
+CHATBOT_SESSION=<session id printed by the demo> python demo.py
+```
+
+The bot still knows the name and city from before the restart, because the history lives in SQLite rather than process memory.
+
+## Notes
+
+- Concurrent sessions are fully isolated — each `session_id` has its own transcript, so parallel users never see each other's context.
+- `HISTORY_WINDOW` is a simple, predictable strategy for bounding prompt size. Natural upgrades: summarise older turns into a rolling summary, or retrieve only the most relevant past messages with the Task 5 embedding approach.
+- SQLite is perfect for a single-process demo. Under real multi-instance load, swap `storage.py` for Postgres or Redis — `chatbot.py` and `main.py` only touch its functions, so nothing else changes.
