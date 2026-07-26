@@ -12,3 +12,6 @@ numpy
 faiss-cpu
 jupyter
 reportlab
+python-multipart
+pypdf
+python-docx

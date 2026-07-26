@@ -1,0 +1,90 @@
+digraph DocumentChain {
+    rankdir=TB;
+    bgcolor="white";
+    splines=polyline;
+    nodesep=0.45;
+    ranksep=0.55;
+    fontname="Helvetica";
+
+    node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=11,
+          margin="0.18,0.12", color="#34a853", fillcolor="#e6f4ea", penwidth=1.6];
+    edge [fontname="Helvetica", fontsize=9, color="#5f6368", arrowsize=0.8];
+
+    subgraph cluster_ingest {
+        label="1 · Ingest";
+        fontsize=12; fontname="Helvetica-Bold"; color="#dadce0"; style="rounded";
+        margin=14;
+        entry [label="POST /analyze  (files)\lPOST /analyze/text  (json)\l"];
+        load  [label="extract_text()\lpdf · docx · csv · json · txt · md\l"];
+        chunk [label="chunk_text()\l700 words · 80 overlap\l"];
+        entry -> load -> chunk;
+    }
+
+    gate1 [label="more than\none chunk?", shape=diamond, color="#f9ab00",
+           fillcolor="#fef7e0", style="filled", height=0.9, width=1.5];
+
+    subgraph cluster_map {
+        label="2 · Map  —  one LLM call per chunk, run concurrently";
+        fontsize=12; fontname="Helvetica-Bold"; color="#dadce0"; style="rounded";
+        margin=14;
+        map [label="map_chain.abatch()\lcompress each chunk into a note\l",
+             color="#4285f4", fillcolor="#e8f0fe"];
+    }
+
+    subgraph cluster_collapse {
+        label="3 · Collapse  —  loops only while notes exceed COLLAPSE_BATCH";
+        fontsize=12; fontname="Helvetica-Bold"; color="#dadce0"; style="rounded";
+        margin=14;
+        gate2 [label="notes > 5?", shape=diamond, color="#f9ab00",
+               fillcolor="#fef7e0", style="filled", height=0.85, width=1.4];
+        collapse [label="collapse_chain.abatch()\lmerge notes in batches of 5\l",
+                  color="#4285f4", fillcolor="#e8f0fe"];
+    }
+
+    condensed [label="condensed text"];
+
+    subgraph cluster_reduce {
+        label="4 · Reduce  —  RunnableParallel, both branches at once";
+        fontsize=12; fontname="Helvetica-Bold"; color="#dadce0"; style="rounded";
+        margin=14;
+        summary  [label="summary_chain\lfinal narrative summary\l",
+                  color="#4285f4", fillcolor="#e8f0fe"];
+        analysis [label="analysis_chain\lwith_structured_output(DocumentAnalysis)\ltopics · entities · risks · sentiment\l",
+                  color="#4285f4", fillcolor="#e8f0fe"];
+    }
+
+    docreport [label="DocumentReport\lsummary + analysis + stats\l"];
+
+    gate3 [label="more than\none document?", shape=diamond, color="#f9ab00",
+           fillcolor="#fef7e0", style="filled", height=0.9, width=1.6];
+
+    subgraph cluster_synth {
+        label="5 · Synthesize";
+        fontsize=12; fontname="Helvetica-Bold"; color="#dadce0"; style="rounded";
+        margin=14;
+        synth [label="synthesis_chain\lwith_structured_output(CorpusSynthesis)\lshared themes · contradictions · merged actions\l",
+               color="#4285f4", fillcolor="#e8f0fe"];
+    }
+
+    corpus [label="CorpusReport  (JSON response)"];
+    cache  [label="cached at GET /reports/{report_id}"];
+
+    chunk -> gate1;
+    gate1 -> map      [label="  yes"];
+    gate1 -> condensed [label="  no · use chunk as-is", constraint=false];
+    map -> gate2;
+    gate2 -> collapse [label="  yes"];
+    collapse -> gate2 [label="  re-check", constraint=false];
+    gate2 -> condensed [label="  no"];
+
+    condensed -> summary;
+    condensed -> analysis;
+    summary  -> docreport;
+    analysis -> docreport;
+
+    docreport -> gate3;
+    gate3 -> synth  [label="  yes"];
+    gate3 -> corpus [label="  no", constraint=false];
+    synth -> corpus;
+    corpus -> cache;
+}

@@ -1,0 +1,44 @@
+Engineering Roadmap Review — Q2 Planning
+20 March 2026, 14:00-15:30 WAT
+Attending: Femi Adeyemi (Eng Manager), Chidera Nwosu (Platform Reliability),
+Tolu Bakare (QA Lead), Sandra Okeke (Product), Ibrahim Musa (Data Platform)
+
+Sandra opened by restating the Q2 commitment: ship the subscriptions feature by
+15 June. She noted that two engineering weeks are already committed to reliability
+follow-ups from the March incident and asked whether that number can be reduced.
+
+Chidera confirmed the index fix shipped on 13 March and the runbook reordering is
+done. The remaining items are the alert threshold change, the staging data seeding
+job, and the checkout load tests.
+
+Ibrahim pushed back on the staging seeding timeline. Sampling 10% of production
+into staging requires a PII scrubbing step that Data Platform has not built, and
+he estimated three weeks rather than the one week assumed in the incident report.
+He proposed a narrower version: seed only the five largest tables, unsampled row
+counts but synthetic values, which he can deliver in one week.
+
+Tolu disagreed with narrowing it. Her position was that synthetic values will not
+reproduce the planner behaviour that caused the incident, because the problem was
+data distribution rather than row count alone. She argued the full scrubbing work
+should be funded now, since this is the second incident in twelve months traced to
+a staging-production gap.
+
+Femi asked whether the load tests alone would have caught it. Tolu said probably
+yes, and that load tests are one week of work, not three. Agreement formed around
+sequencing: load tests first, then revisit staging seeding at the end of Q2.
+
+DECISIONS
+- Alert threshold change proceeds as planned, due 20 March, owner Femi.
+- Checkout load tests are funded for Q2, one week, owner Tolu, due 10 April.
+- Staging data seeding is deferred to Q3. Ibrahim will write a one-page scoping
+  doc on the PII scrubbing work by 3 April so it can be estimated properly.
+- Subscriptions ship date holds at 15 June.
+
+Sandra raised customer communication separately. Support handled the incident well
+but no proactive notice went out, and feedback shows customers want a public status
+page. No owner was assigned. Femi said it belongs to Product rather than Engineering
+and asked Sandra to bring a proposal to the next review.
+
+Ibrahim noted before close that promo code validation is still running slower than
+the rest of the checkout path even after the index fix, and that nobody has looked
+at it. It was not added to the Q2 plan.

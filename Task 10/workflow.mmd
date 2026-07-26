@@ -1,0 +1,52 @@
+flowchart TD
+    subgraph INGEST["1 · Ingest"]
+        A["POST /analyze (files)<br/>POST /analyze/text (json)"] --> B["extract_text()<br/>pdf · docx · csv · json · txt · md"]
+        B --> C["chunk_text()<br/>700 words, 80 overlap"]
+    end
+
+    C --> D{"more than<br/>one chunk?"}
+
+    subgraph MAP["2 · Map — one LLM call per chunk, run concurrently"]
+        E["map_chain.abatch()<br/>compress each chunk to a note"]
+    end
+
+    subgraph COLLAPSE["3 · Collapse — only while notes exceed COLLAPSE_BATCH"]
+        F["collapse_chain.abatch()<br/>merge notes in batches of 5"]
+        G{"notes &gt; 5?"}
+    end
+
+    D -- "yes" --> E
+    E --> G
+    G -- "yes" --> F
+    F --> G
+    D -- "no · use chunk as-is" --> H
+    G -- "no" --> H["condensed text"]
+
+    subgraph REDUCE["4 · Reduce — RunnableParallel, both branches at once"]
+        I["summary_chain<br/>final narrative summary"]
+        J["analysis_chain<br/>with_structured_output(DocumentAnalysis)"]
+    end
+
+    H --> I
+    H --> J
+    I --> K["DocumentReport<br/>summary + analysis + stats"]
+    J --> K
+
+    K --> L{"more than<br/>one document?"}
+
+    subgraph SYNTH["5 · Synthesize"]
+        M["synthesis_chain<br/>with_structured_output(CorpusSynthesis)<br/>shared themes · contradictions · merged actions"]
+    end
+
+    L -- "yes" --> M
+    M --> N["CorpusReport (JSON)"]
+    L -- "no" --> N
+
+    N --> O["cached in /reports/{report_id}"]
+
+    classDef llm fill:#e8f0fe,stroke:#4285f4,stroke-width:2px,color:#111
+    classDef io fill:#e6f4ea,stroke:#34a853,stroke-width:2px,color:#111
+    classDef gate fill:#fef7e0,stroke:#f9ab00,stroke-width:2px,color:#111
+    class E,F,I,J,M llm
+    class A,B,C,H,K,N,O io
+    class D,G,L gate

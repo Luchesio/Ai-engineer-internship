@@ -628,3 +628,186 @@ The bot still knows the name and city from before the restart, because the histo
 - Concurrent sessions are fully isolated — each `session_id` has its own transcript, so parallel users never see each other's context.
 - `HISTORY_WINDOW` is a simple, predictable strategy for bounding prompt size. Natural upgrades: summarise older turns into a rolling summary, or retrieve only the most relevant past messages with the Task 5 embedding approach.
 - SQLite is perfect for a single-process demo. Under real multi-instance load, swap `storage.py` for Postgres or Redis — `chatbot.py` and `main.py` only touch its functions, so nothing else changes.
+
+# Task 10 — Document Summarization & Analysis Chain (Map-Reduce + FastAPI)
+
+A chain that takes one or more documents and returns both a **narrative summary** and a **structured analysis** — topics, entities, key points, action items, risks, sentiment, and open questions. Give it several documents and it adds a cross-document synthesis that surfaces shared themes and, more usefully, places where the documents **contradict each other**.
+
+Tasks 3, 7 and 9 all process a single short question per turn. Task 10 is the first chain that handles inputs larger than a context window, so it uses a map-reduce structure with a recursive collapse step rather than a single prompt.
+
+## Workflow
+
+![Workflow diagram](Task%2010/workflow.png)
+
+The diagram is generated from `workflow.dot` (Graphviz). `workflow.mmd` holds the same graph in Mermaid for editing on GitHub:
+
+```bash
+cd "Task 10"
+dot -Tpng -Gdpi=150 workflow.dot -o workflow.png
+```
+
+| Stage         | What happens                                                                                              |
+| ------------- | --------------------------------------------------------------------------------------------------------- |
+| 1. Ingest     | Extract text by file type, then split into 700-word windows with 80-word overlap                          |
+| 2. Map        | One LLM call per chunk compresses it to a note; all chunks run concurrently via `abatch`                  |
+| 3. Collapse   | While notes exceed `COLLAPSE_BATCH`, merge them in batches — repeats until they fit one prompt            |
+| 4. Reduce     | `RunnableParallel` runs the summary and the structured analysis on the condensed text **at the same time** |
+| 5. Synthesize | With more than one document, a final call compares the per-document reports                               |
+
+Single-chunk documents skip stages 2 and 3 entirely and go straight to reduce, so short files cost exactly two LLM calls.
+
+## How It Works
+
+| Piece          | Role                                                                                    |
+| -------------- | ----------------------------------------------------------------------------------------- |
+| `loaders.py`   | Text extraction for `.pdf`, `.docx`, `.csv`, `.json`, `.txt`, `.md`, plus the chunker    |
+| `models.py`    | Pydantic schemas — they define the LLM's output contract *and* the API response shape    |
+| `chain.py`     | The LCEL chain: map, collapse, reduce, analyze, synthesize                               |
+| `main.py`      | FastAPI app exposing `/analyze`, `/analyze/text`, and report retrieval                   |
+| `demo.py`      | Runs the bundled samples through the API and prints a readable report                    |
+| `samples/`     | Three related documents that deliberately disagree with each other                       |
+| `.env.example` | Template for required environment variables                                              |
+
+The analysis branch uses `model.with_structured_output(DocumentAnalysis)`, so the model returns a validated Pydantic object rather than free text that needs parsing. The same class is the FastAPI `response_model`, which means the schema is declared once and shows up automatically in `/docs`.
+
+Both reduce branches read the *condensed* text rather than the summary, so the analysis sees the document's full detail instead of inheriting whatever the summary happened to keep.
+
+## Requirements
+
+- Python 3.10+
+- pip packages: `fastapi`, `uvicorn`, `python-multipart`, `httpx`, `langchain-core`, `langchain-openai`, `python-dotenv`, `pydantic`, `pypdf`, `python-docx`
+- Graphviz (only to re-render the diagram): `sudo apt install graphviz`
+
+## Setup
+
+**1. Install dependencies**
+
+```bash
+cd "Task 10"
+pip install -r ../requirements.txt
+```
+
+**2. Configure your API key**
+
+```bash
+cp .env.example .env
+```
+
+Then edit `.env`:
+
+```
+OPENAI_API_KEY=sk-...your actual key...
+OPENAI_MODEL=gpt-4o-mini
+OPENAI_TEMPERATURE=0.1
+```
+
+| Variable             | Required | Default       | Purpose                                                 |
+| -------------------- | -------- | ------------- | ------------------------------------------------------- |
+| `OPENAI_API_KEY`     | Yes      | —             | Your OpenAI secret key                                  |
+| `OPENAI_MODEL`       | No       | `gpt-4o-mini` | Chat model to use                                       |
+| `OPENAI_TEMPERATURE` | No       | `0.1`         | Kept low so summaries stay faithful to the source       |
+| `MAX_CONCURRENCY`    | No       | `5`           | Parallel LLM calls, across both chunks and documents    |
+| `COLLAPSE_BATCH`     | No       | `5`           | Notes merged per collapse call before re-checking       |
+
+**3. Run the server**
+
+```bash
+uvicorn main:app --reload
+```
+
+The app starts on http://127.0.0.1:8000, with interactive docs at http://127.0.0.1:8000/docs.
+
+## Usage
+
+Upload one or more files:
+
+```bash
+curl -X POST http://127.0.0.1:8000/analyze \
+  -F "files=@samples/incident_report.md" \
+  -F "files=@samples/roadmap_meeting.txt"
+```
+
+Or send raw text with no file at all:
+
+```bash
+curl -X POST http://127.0.0.1:8000/analyze/text \
+  -H "Content-Type: application/json" \
+  -d '{"documents": [{"source": "note.txt", "text": "Paste any document text here..."}]}'
+```
+
+Response (trimmed):
+
+```json
+{
+  "report_id": "9f2c1a7b4e02",
+  "document_count": 2,
+  "documents": [
+    {
+      "source": "incident_report.md",
+      "words": 465,
+      "chunks": 1,
+      "summary": "INC-2481 is a SEV-2 incident report covering a 3h 14m checkout latency spike...",
+      "analysis": {
+        "document_type": "incident report",
+        "topics": ["checkout latency", "database saturation", "release rollback"],
+        "entities": [{ "name": "checkout-api", "type": "product", "mention": "the affected service" }],
+        "key_points": ["p95 latency rose from 340 ms to 8.7 s across 18,400 attempts"],
+        "action_items": ["Add an index on order_promotions.order_id — Chidera, due 14 March"],
+        "risks": ["Staging data volume is not representative of production"],
+        "sentiment": "negative",
+        "sentiment_rationale": "The document reports a customer-facing outage and its causes.",
+        "open_questions": ["Should schema changes on large tables require a query plan review?"]
+      }
+    }
+  ],
+  "synthesis": {
+    "overview": "Both documents concern the March checkout incident...",
+    "shared_themes": ["checkout latency", "staging/production parity"],
+    "contradictions": [
+      "The incident report assigns staging data seeding a 3 April due date, while the roadmap review defers that work to Q3."
+    ],
+    "combined_action_items": ["Fund checkout load tests for Q2", "Scope the PII scrubbing work by 3 April"]
+  }
+}
+```
+
+Retrieve a report you already generated:
+
+```bash
+curl http://127.0.0.1:8000/reports                  # list generated reports
+curl http://127.0.0.1:8000/reports/9f2c1a7b4e02     # fetch one in full
+```
+
+| Endpoint                | Method | Purpose                                                       |
+| ----------------------- | ------ | ------------------------------------------------------------- |
+| `/`                     | GET    | Health check, active model, supported extensions              |
+| `/analyze`              | POST   | Multipart upload of one or more documents                     |
+| `/analyze/text`         | POST   | Same pipeline for text pasted directly into the request       |
+| `/reports`              | GET    | List reports generated since startup                          |
+| `/reports/{report_id}`  | GET    | Fetch a full report                                           |
+
+## Running the Demo
+
+With the server running, in a second terminal:
+
+```bash
+cd "Task 10"
+python demo.py
+```
+
+It analyses all three bundled samples and prints each summary and analysis, then the cross-document synthesis. The samples are written to disagree: `incident_report.md` schedules staging data seeding for 3 April, `roadmap_meeting.txt` defers it to Q3, and `customer_feedback.csv` raises slow promo-code validation that the incident report never mentions and the meeting explicitly leaves out of the plan. A working synthesis step should surface all three.
+
+Point it at your own files instead:
+
+```bash
+python demo.py ~/reports/q2-review.pdf ~/notes/standup.docx
+```
+
+## Notes
+
+- Cost scales with chunks, not documents: an *n*-chunk document costs *n* map calls plus the collapse rounds plus 2, and short files stay at 2.
+- `MAX_CONCURRENCY` bounds parallel calls at both levels — chunks within a document and documents within a request — so a 40-chunk upload won't trip provider rate limits.
+- Prompts instruct the model to return empty lists rather than invent action items or risks, which is why an informational document comes back with `action_items: []` instead of filler.
+- Scanned PDFs return a 415 with an explanation, since `pypdf` extracts embedded text and not images. Run OCR first if you need those.
+- Reports are cached in-process and clear on restart. Persisting them is Task 9's `storage.py` pattern applied to a different table.
+- The 5 MB upload cap in `main.py` is a guard, not a limit of the chain — the collapse loop handles arbitrarily long documents by design.
