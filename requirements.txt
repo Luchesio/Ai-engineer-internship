@@ -15,3 +15,5 @@ reportlab
 python-multipart
 pypdf
 python-docx
+pytest
+pytest-asyncio

@@ -1,0 +1,72 @@
+KESTREL FINANCIAL GROUP PLC
+Technology Committee — Minutes of the Meeting held on 19 March 2026
+Location: Boardroom 2, 40 Gracechurch Street, London / hybrid
+Chair: M. Halvorsen (Chief Operating Officer)
+
+Present: M. Halvorsen (Chair), A. Renwick (CFO), S. Bello (CTO), P. Lindqvist (Head of Risk),
+D. Achebe (Head of Operations), J. Moreau (General Counsel, joined for item 3).
+Apologies: R. Tanaka (Non-Executive Director).
+
+1. MINUTES OF THE PREVIOUS MEETING
+
+The minutes of 12 February 2026 were approved without amendment. The Chair noted that two
+actions from that meeting remain open: the disaster recovery test scheduled for Q1 has slipped
+to April, and the vendor consolidation review has not yet been circulated.
+
+2. RECONCILIATION PLATFORM — VENDOR SELECTION
+
+S. Bello presented the outcome of the reconciliation platform selection. Three suppliers were
+shortlisted. Northwind Systems Ltd scored highest on functional fit and was the only supplier
+able to commit to a June go-live.
+
+A. Renwick confirmed that the total two-year cost of the Northwind engagement is 180,000 GBP,
+which sits within the envelope already approved in the FY26 technology budget. No further
+capital approval is therefore required.
+
+The Committee RESOLVED to approve the appointment of Northwind Systems Ltd for an initial
+two-year term. J. Moreau was asked to finalise the contract for signature before the end of
+March 2026.
+
+D. Achebe asked whether the arrangement locked the Group in. M. Halvorsen confirmed that the
+contract can be exited on 30 days notice at any point, so the commitment carries limited
+downside. On that basis the Committee did not require a break-cost analysis.
+
+ACTION 26/03/01 — J. Moreau to execute the Northwind Master Services Agreement by 31 March 2026.
+ACTION 26/03/02 — S. Bello to confirm the implementation plan and go-live date to the Committee
+by 10 April 2026.
+
+3. PROJECT DELIVERY AND RESOURCING
+
+S. Bello reported that implementation requires two full-time integration engineers from
+1 April 2026. Only one is currently allocated; the second is expected to roll off the payments
+migration in mid-May. The Committee noted the risk that this delays user acceptance testing.
+
+The target go-live remains 30 June 2026. S. Bello advised that a four-week slip is possible if
+the second engineer is not in place by 15 May 2026.
+
+ACTION 26/03/03 — D. Achebe to identify contractor cover for the second engineer role and report
+by 3 April 2026.
+
+4. RISK AND SECURITY
+
+P. Lindqvist raised that the security review of Northwind had not been completed at the time of
+selection. The Committee agreed that the review should be completed before any Client data is
+loaded into the platform, but did not make it a condition of signature.
+
+P. Lindqvist further noted that the Group's standard position is that supplier data must remain
+within the United Kingdom. He asked that this be confirmed in writing.
+
+ACTION 26/03/04 — P. Lindqvist to circulate the completed security review by 17 April 2026.
+
+5. DISASTER RECOVERY TEST
+
+The annual disaster recovery test has been rescheduled to 22 April 2026. D. Achebe confirmed
+that the test will cover the payments and custody systems but not the new reconciliation
+platform, which will not be live at that date.
+
+6. ANY OTHER BUSINESS
+
+A. Renwick noted that technology spend is tracking 6% above plan for the year to date, driven
+mainly by contractor rates. The Committee asked for a variance analysis at the next meeting.
+
+The meeting closed at 11:40. The next meeting is scheduled for 16 April 2026.

@@ -811,3 +811,466 @@ python demo.py ~/reports/q2-review.pdf ~/notes/standup.docx
 - Scanned PDFs return a 415 with an explanation, since `pypdf` extracts embedded text and not images. Run OCR first if you need those.
 - Reports are cached in-process and clear on restart. Persisting them is Task 9's `storage.py` pattern applied to a different table.
 - The 5 MB upload cap in `main.py` is a guard, not a limit of the chain — the collapse loop handles arbitrarily long documents by design.
+# Task 11 — Document Insight Agent (Tool-Calling Agent + FastAPI)
+
+An **agent** that reads PDF and text documents and extracts structured, evidence-linked insights. Task 10 pushes every chunk of every document through a fixed chain. Task 11 inverts that: the model cannot see the documents at all and must reach them through tools, so it decides what to search for, which pages to open, and what is worth recording.
+
+Every insight it records carries a verbatim quote and a location. The quote is checked against the source segment before the report is returned, so a hallucinated citation is caught by the code rather than trusted.
+
+## How It Works
+
+| Piece            | Role                                                                                    |
+| ---------------- | --------------------------------------------------------------------------------------- |
+| `documents.py`   | Loads PDF/txt/md into labelled segments; keyword search and quote verification           |
+| `tools.py`       | The four tools the agent is bound to, closed over one workspace                          |
+| `agent.py`       | The tool-calling loop, then a structured-output pass that writes the final summary       |
+| `models.py`      | Pydantic schemas — the LLM's output contract and the API response shape                  |
+| `main.py`        | FastAPI app exposing `/extract`, `/extract/text`, and report retrieval                   |
+| `demo.py`        | Runs the bundled samples through the API and prints a readable report                    |
+| `samples/`       | A 4-page PDF contract, board minutes, and a security review that disagree with each other |
+| `.env.example`   | Template for required environment variables                                              |
+
+### The agent's tools
+
+| Tool                | What it gives the agent                                                        |
+| ------------------- | ------------------------------------------------------------------------------ |
+| `list_documents`    | Every document's segment labels, sizes, and a one-line preview of each segment  |
+| `search_documents`  | Locations and snippets for a keyword query, ranked by term coverage             |
+| `read_segments`     | The full text of up to four segments at a time                                  |
+| `record_insight`    | Saves one finding with a category, quote, location, and confidence              |
+
+PDFs are segmented by page (`p1`, `p2`, …), text and markdown into ~250-word blocks on paragraph boundaries (`s1`, `s2`, …). Labels are how the agent addresses the documents and how every insight is cited back.
+
+### Why the loop matters
+
+`record_insight` verifies the quote as it is stored and tells the agent when it fails: an unverified quote comes back with an instruction to re-read the segment and record it again. The agent usually fixes itself on the next turn. Whatever remains unverified stays in the response as `verified: false` rather than being silently dropped, and the report counts both.
+
+Because the agent reads selectively, cost tracks what it chose to open rather than total document length. `stats` and `trace` in the response show exactly which tools ran and in what order, so the run is auditable after the fact.
+
+Insights are typed: `key_fact`, `figure`, `date`, `obligation`, `risk`, `decision`, `open_question`, `contradiction`.
+
+## Requirements
+
+- Python 3.10+
+- pip packages: `fastapi`, `uvicorn`, `python-multipart`, `httpx`, `langchain-core`, `langchain-openai`, `python-dotenv`, `pydantic`, `pypdf`, `reportlab`
+
+`reportlab` is only needed to regenerate the sample PDF.
+
+## Setup
+
+**1. Install dependencies**
+
+```bash
+cd "Task 11"
+pip install -r ../requirements.txt
+```
+
+**2. Configure your API key**
+
+```bash
+cp .env.example .env
+```
+
+Then edit `.env`:
+
+```
+OPENAI_API_KEY=sk-...your actual key...
+OPENAI_MODEL=gpt-4o-mini
+OPENAI_TEMPERATURE=0.1
+```
+
+| Variable             | Required | Default       | Purpose                                            |
+| -------------------- | -------- | ------------- | -------------------------------------------------- |
+| `OPENAI_API_KEY`     | Yes      | —             | Your OpenAI secret key                             |
+| `OPENAI_MODEL`       | No       | `gpt-4o-mini` | Chat model to use                                  |
+| `OPENAI_TEMPERATURE` | No       | `0.1`         | Kept low so extractions stay faithful to the source |
+| `MAX_AGENT_STEPS`    | No       | `14`          | Hard ceiling on model turns per run                |
+
+**3. Run the server**
+
+```bash
+uvicorn main:app --reload
+```
+
+The app starts on http://127.0.0.1:8000, with interactive docs at http://127.0.0.1:8000/docs.
+
+## Sample Documents
+
+Three documents about the same engagement, written to disagree:
+
+| File                   | What it is                          | Contains                                          |
+| ---------------------- | ----------------------------------- | ------------------------------------------------- |
+| `vendor_agreement.pdf` | 4-page master services agreement    | Fees, term, SLA, data clauses, liability cap      |
+| `board_minutes.txt`    | Technology committee minutes        | Decisions, owners, dated actions, budget approval |
+| `security_review.md`   | Third-party security review         | Seven findings, due dates, open questions         |
+
+The disagreements are deliberate and checkable:
+
+- The agreement sets fees of 8,750 GBP a month over 24 months (210,000 GBP); the minutes record the two-year cost as 180,000 GBP and skip further approval on that basis.
+- Clause 4.2 requires 90 days notice to terminate; clause 11.3 in the same contract says 30 days. The minutes rely on the 30-day reading to waive a break-cost analysis.
+- Clause 6.2 restricts hosting to the UK and Ireland; the security review finds a subprocessor in Frankfurt.
+- The contract requires a penetration test every 12 months; the most recent one is 19 months old.
+
+A working run should surface these as `contradiction` insights with quotes from both sides.
+
+Regenerate the PDF after editing its source text:
+
+```bash
+cd "Task 11/samples"
+python build_agreement_pdf.py
+```
+
+## Usage
+
+Upload one or more documents:
+
+```bash
+curl -X POST http://127.0.0.1:8000/extract \
+  -F "files=@samples/vendor_agreement.pdf" \
+  -F "files=@samples/board_minutes.txt"
+```
+
+Steer the agent toward a particular question:
+
+```bash
+curl -X POST http://127.0.0.1:8000/extract \
+  -F "files=@samples/vendor_agreement.pdf" \
+  -F "focus=exit terms, notice periods, and anything that locks us in"
+```
+
+Or send raw text with no file:
+
+```bash
+curl -X POST http://127.0.0.1:8000/extract/text \
+  -H "Content-Type: application/json" \
+  -d '{"documents": [{"filename": "note.txt", "text": "Paste any document text here..."}]}'
+```
+
+Response (trimmed):
+
+```json
+{
+  "report_id": "4c81be09a2f7",
+  "focus": null,
+  "documents": [
+    {
+      "doc_id": "doc1",
+      "filename": "vendor_agreement.pdf",
+      "kind": "pdf",
+      "segments": 4,
+      "words": 975,
+      "segments_read": ["p1", "p2", "p4"]
+    }
+  ],
+  "summary": {
+    "title": "Northwind reconciliation platform engagement",
+    "document_types": ["master services agreement", "committee minutes"],
+    "overview": "The agreement appoints Northwind Systems for a 24-month term from 1 April 2026...",
+    "entities": [
+      { "name": "Northwind Systems Ltd", "type": "organization", "role": "supplier of the platform" }
+    ],
+    "timeline": [{ "date": "30 June 2026", "event": "Implementation completion deadline" }],
+    "open_questions": ["Which notice period governs — clause 4.2 or clause 11.3?"],
+    "recommended_actions": ["Resolve the conflicting notice periods before signature"]
+  },
+  "insights": [
+    {
+      "category": "contradiction",
+      "statement": "The contract states two different notice periods for termination.",
+      "evidence": "Either party may terminate this Agreement at any time by giving 30 days written notice",
+      "doc_id": "doc1",
+      "location": "p4",
+      "confidence": "high",
+      "verified": true
+    },
+    {
+      "category": "figure",
+      "statement": "The combined monthly charge is 8,750 GBP excluding VAT.",
+      "evidence": "giving a combined monthly charge of 8,750 GBP exclusive of VAT",
+      "doc_id": "doc1",
+      "location": "p1",
+      "confidence": "high",
+      "verified": true
+    }
+  ],
+  "insights_by_category": { "contradiction": 1, "figure": 1 },
+  "stats": {
+    "steps": 9,
+    "tool_calls": 14,
+    "tools_used": { "list_documents": 1, "search_documents": 3, "read_segments": 4, "record_insight": 6 },
+    "insights_recorded": 12,
+    "insights_verified": 12
+  },
+  "trace": ["list_documents()", "search_documents(query='termination notice', doc_id=all)"]
+}
+```
+
+Retrieve a report generated earlier:
+
+```bash
+curl http://127.0.0.1:8000/reports                  # list reports
+curl http://127.0.0.1:8000/reports/4c81be09a2f7     # fetch one in full
+```
+
+| Endpoint               | Method | Purpose                                                    |
+| ---------------------- | ------ | ---------------------------------------------------------- |
+| `/`                    | GET    | Health check, active model, supported extensions           |
+| `/extract`             | POST   | Multipart upload of one or more documents, optional `focus` |
+| `/extract/text`        | POST   | Same pipeline for text sent directly in the request        |
+| `/reports`             | GET    | List reports generated since startup                       |
+| `/reports/{report_id}` | GET    | Fetch a full report                                        |
+
+## Running the Demo
+
+With the server running, in a second terminal:
+
+```bash
+cd "Task 11"
+python demo.py
+```
+
+It sends all three samples, prints every insight with its quote and citation, then the entity list, timeline, open questions, and the agent's full tool trace. Insights whose quotes failed verification are marked inline.
+
+Give it a focus, or point it at your own files:
+
+```bash
+AGENT_FOCUS="financial exposure and exit terms" python demo.py
+python demo.py ~/contracts/lease.pdf ~/notes/handover.md
+```
+
+## Notes
+
+- Quote verification normalises whitespace and case before matching, so PDF line wrapping doesn't cause false negatives. It is a substring check, not a similarity score: a paraphrase fails, which is the intent.
+- `MAX_AGENT_STEPS` bounds the loop. If the agent hits the ceiling, whatever it recorded is still returned, and `stats.steps` shows it stopped early.
+- `search_documents` is keyword-based on purpose. It keeps the agent cheap and dependency-free; swapping in the Task 5 embedding search would be a change to one method on `Workspace`.
+- The agent reads at most four segments per call, which keeps any one tool result small enough to leave room for the rest of the conversation.
+- Scanned PDFs raise a 415 with an explanation, since `pypdf` reads embedded text and not images. Run OCR first.
+- Reports are cached in-process and clear on restart, same as Task 10.
+
+# Task 12 — Chatbot REST API (JSON Envelope + Local Deployment)
+
+A REST API that wraps a stateful chatbot and returns the **same JSON shape on every response** — successes, validation failures, rate limits, and upstream errors alike. Tasks 3, 7, and 9 expose a chatbot over HTTP; Task 12 is about the wrapper itself: one response contract, typed errors, request tracing, rate limiting, metrics, tests, and a local deployment that runs with or without an OpenAI key.
+
+## The Response Contract
+
+Every JSON response has four top-level keys, always present:
+
+```json
+{
+  "success": true,
+  "data": { "reply": "...", "session_id": "a1b2c3d4e5f6", "turn": 3, "model": "gpt-4o-mini",
+            "usage": { "prompt_tokens": 412, "completion_tokens": 88, "total_tokens": 500 } },
+  "error": null,
+  "meta": { "request_id": "9f2c1a7b4e02d8c1", "timestamp": "2026-03-14T09:12:44.318+00:00",
+            "duration_ms": 812.4, "version": "1.0.0" }
+}
+```
+
+Failures fill `error` and null out `data`:
+
+```json
+{
+  "success": false,
+  "data": null,
+  "error": {
+    "code": "validation_error",
+    "message": "The request body failed validation.",
+    "details": [{ "field": "message", "problem": "String should have at least 1 character" }]
+  },
+  "meta": { "request_id": "3ab7...", "timestamp": "...", "duration_ms": 1.4, "version": "1.0.0" }
+}
+```
+
+A client parses one shape and branches on `success`. `error.code` is the stable value to branch on; `error.message` is for humans and may be reworded.
+
+| Code                | HTTP | Meaning                                        |
+| ------------------- | ---- | ---------------------------------------------- |
+| `validation_error`  | 422  | Body failed schema validation; see `details`   |
+| `missing_api_key`   | 401  | `X-API-Key` header absent while keys are set   |
+| `invalid_api_key`   | 401  | Key not recognised                             |
+| `rate_limited`      | 429  | Per-minute limit reached; `Retry-After` is set |
+| `session_not_found` | 404  | No such session                                |
+| `not_found`         | 404  | No such route                                  |
+| `upstream_error`    | 502  | The model call failed or timed out             |
+| `internal_error`    | 500  | Unexpected server error                        |
+
+## How It Works
+
+| Piece            | Role                                                                                 |
+| ---------------- | ------------------------------------------------------------------------------------- |
+| `config.py`      | Every setting read from the environment in one place                                 |
+| `schemas.py`     | `Envelope[T]` plus the request and data models it wraps                              |
+| `runtime.py`     | Request IDs, timing, JSON logging, API-key auth, rate limiting, metrics              |
+| `chatbot.py`     | The wrapped engine — LangChain chain, SQLite-backed history, streaming, mock mode    |
+| `storage.py`     | SQLite session store, created on start                                               |
+| `main.py`        | Routes and the exception handlers that put every error into the envelope             |
+| `client.py`      | Demo client: a multi-turn conversation, a streamed reply, and an error response      |
+| `tests/`         | pytest suite covering the contract, run entirely in mock mode                        |
+| `Dockerfile`     | Container image with a health check                                                  |
+| `run.sh`         | One-command local start                                                              |
+
+`Envelope[T]` is a generic Pydantic model, so `Envelope[ChatData]` is the declared `response_model` on `/v1/chat` and the full envelope shows up in `/docs` with the right `data` type rather than a loose object.
+
+Errors reach the envelope through exception handlers rather than try/except in each route. `APIError` carries an HTTP status and a stable code; FastAPI's validation errors are reshaped into per-field entries; anything unhandled becomes `internal_error`, with the underlying message shown only when `DEBUG=1`.
+
+`ContextMiddleware` assigns a request ID (or reuses an inbound `X-Request-ID`), times the request, records it in the metrics counters, sets `X-Request-ID` and `X-Response-Time-Ms` on the response, and writes one JSON log line per request. The same ID appears in `meta.request_id`, so a user-reported response can be found in the logs directly.
+
+Rate limiting is a fixed window per minute, keyed by API key when keys are configured and by client IP otherwise. When keys are not configured the API is open, which is the sensible local default.
+
+## Endpoints
+
+| Endpoint                    | Method | Auth | Purpose                                       |
+| --------------------------- | ------ | ---- | --------------------------------------------- |
+| `/healthz`                  | GET    | No   | Liveness, version, active model, session count |
+| `/v1/chat`                  | POST   | Yes  | Send a message, get a reply                   |
+| `/v1/chat/stream`           | POST   | Yes  | Same, streamed as NDJSON                      |
+| `/v1/sessions`              | GET    | Yes  | List sessions with message counts             |
+| `/v1/sessions/{id}`         | GET    | Yes  | Full stored transcript                        |
+| `/v1/sessions/{id}`         | DELETE | Yes  | Delete a session and its history              |
+| `/v1/metrics`               | GET    | Yes  | Request counts, error counts, latency, tokens |
+
+`/healthz` is deliberately unauthenticated so container and uptime checks work without a credential.
+
+## Requirements
+
+- Python 3.10+
+- pip packages: `fastapi`, `uvicorn`, `httpx`, `langchain-core`, `langchain-openai`, `python-dotenv`, `pydantic`, `pytest`, `pytest-asyncio`
+- Docker (optional, for the container route)
+
+SQLite ships with Python — no database server needed.
+
+## Deploying Locally
+
+**Option A — one command**
+
+```bash
+cd "Task 12"
+./run.sh
+```
+
+It copies `.env.example` to `.env` on first run, installs anything missing, and starts uvicorn on http://127.0.0.1:8000. Docs at `/docs`, health at `/healthz`.
+
+**Option B — no API key**
+
+Mock mode returns deterministic canned replies through the whole stack, so you can exercise the API, the envelope, streaming, and the tests without spending anything:
+
+```bash
+MOCK=1 ./run.sh
+```
+
+**Option C — Docker**
+
+```bash
+cd "Task 12"
+cp .env.example .env        # add your key, or set MOCK=1
+docker compose up --build
+```
+
+The compose file mounts a named volume at `/data` so `chatbot.db` survives container rebuilds, and the image ships a `HEALTHCHECK` that polls `/healthz`.
+
+**Option D — manual**
+
+```bash
+cd "Task 12"
+pip install -r requirements.txt
+cp .env.example .env
+uvicorn main:app --reload
+```
+
+## Configuration
+
+| Variable                | Default        | Purpose                                                     |
+| ----------------------- | -------------- | ----------------------------------------------------------- |
+| `OPENAI_API_KEY`        | —              | Required unless `MOCK=1`                                    |
+| `OPENAI_MODEL`          | `gpt-4o-mini`  | Chat model to use                                           |
+| `OPENAI_TEMPERATURE`    | `0.3`          | Higher = more creative, lower = more focused                |
+| `MOCK`                  | `0`            | `1` serves canned replies with no upstream calls            |
+| `DEBUG`                 | `0`            | `1` returns the real message on `internal_error`            |
+| `HISTORY_WINDOW`        | `20`           | Recent messages replayed into the prompt per session        |
+| `REQUEST_TIMEOUT`       | `60`           | Seconds before an upstream call becomes `upstream_error`    |
+| `MAX_MESSAGE_CHARS`     | `4000`         | Longer messages are rejected as `validation_error`          |
+| `API_KEYS`              | empty          | Comma-separated keys; empty disables auth                   |
+| `RATE_LIMIT_PER_MINUTE` | `30`           | Per key or per IP; `0` disables                             |
+| `CORS_ORIGINS`          | `*`            | Comma-separated allowed origins                             |
+| `DB_PATH`               | `chatbot.db`   | SQLite file location                                        |
+| `HOST` / `PORT`         | `127.0.0.1` / `8000` | Bind address used by `run.sh`                         |
+
+## Usage
+
+Start a conversation (omit `session_id` and the server mints one):
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "My name is Ada and I work in Lagos."}'
+```
+
+Continue it with the returned `session_id`:
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What is my name?", "session_id": "a1b2c3d4e5f6"}'
+```
+
+With auth enabled, add the header:
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/chat \
+  -H "X-API-Key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Hello"}'
+```
+
+Stream a reply. This is the one endpoint that isn't enveloped — it emits NDJSON, one JSON object per line, so a client can render tokens as they arrive:
+
+```bash
+curl -N -X POST http://127.0.0.1:8000/v1/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Explain REST in two sentences."}'
+```
+
+```
+{"type": "start", "session_id": "a1b2c3d4e5f6", "request_id": "9f2c1a7b4e02d8c1"}
+{"type": "token", "text": "REST "}
+{"type": "token", "text": "is "}
+{"type": "end", "session_id": "a1b2c3d4e5f6", "turn": 4}
+```
+
+Manage sessions and check the counters:
+
+```bash
+curl http://127.0.0.1:8000/v1/sessions
+curl http://127.0.0.1:8000/v1/sessions/a1b2c3d4e5f6
+curl -X DELETE http://127.0.0.1:8000/v1/sessions/a1b2c3d4e5f6
+curl http://127.0.0.1:8000/v1/metrics
+```
+
+## Running the Demo Client
+
+With the server running, in a second terminal:
+
+```bash
+cd "Task 12"
+python client.py
+```
+
+It runs a three-turn conversation, streams a fourth reply token by token, deliberately sends an invalid request to show the error envelope, then prints the stored transcript size and the server metrics. Set `API_KEY` if auth is enabled, or `API_URL` to point at a different host.
+
+## Tests
+
+```bash
+cd "Task 12"
+pytest -q
+```
+
+Eleven tests run against `TestClient` in mock mode, so they need no API key and make no network calls. They cover the envelope shape on every response, session continuity across turns, each error code, the rate limit and its `Retry-After` header, request-ID echo, NDJSON streaming, and API-key enforcement.
+
+## Notes
+
+- Mock mode is what makes the suite cheap and deterministic. It sits at the boundary of `chatbot.py`, so everything above it — routing, validation, auth, rate limiting, storage, the envelope — is the same code in both modes.
+- The rate limiter and metrics live in process memory. Behind more than one worker each process would count separately; Redis is the usual replacement, and only `runtime.py` changes.
+- SQLite with the default settings is fine for a single-process deployment. Under real concurrent load, move `storage.py` to Postgres — nothing else touches the database.
+- The streaming endpoint stores the full reply only after the stream closes, so a client that disconnects mid-stream leaves nothing half-written in the transcript.
+- `API_KEYS` empty means open, which is right for local work and wrong for anything exposed. Set it before binding to `0.0.0.0`.
+- Token counts come from the provider's usage metadata when available and fall back to a character estimate otherwise, so treat `usage` in mock mode as indicative only.
